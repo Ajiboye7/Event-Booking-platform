@@ -1,0 +1,152 @@
+// ============================================================================
+// Event Ticket Booking Platform — Prisma schema (PostgreSQL)
+// ============================================================================
+// This schema is intentionally the ONLY part I'm giving you fully solved.
+// The logic that uses it correctly (atomic holds, idempotent webhooks,
+// transactional confirm) is yours to design and implement.
+//
+// Read the comments — they flag WHY each field/constraint exists, not just
+// what it is. Some of these fields only make sense once you hit the problem
+// they solve.
+// ============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ----------------------------------------------------------------------------
+// Users — kept minimal on purpose. Plug in your own auth (Clerk, NextAuth,
+// whatever) and just make sure a row here exists per authenticated user.
+// ----------------------------------------------------------------------------
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  createdAt DateTime @default(now())
+
+  holds        Hold[]
+  bookings     Booking[]
+  notifications Notification[]
+}
+
+// ----------------------------------------------------------------------------
+// Event — note `seatsAvailable` is a live counter, not derived on read.
+// This is a deliberate design choice: it's what makes atomic
+// increment/decrement possible in a single statement (see the "why" below).
+// You could instead compute available seats as
+// (totalSeats - count(confirmed bookings)) on every read, but that pushes
+// the concurrency problem onto a COUNT query under load, which has its own
+// race conditions. Think about the tradeoff — you may end up wanting both
+// (a live counter AND a way to reconcile/audit it against actual bookings).
+// ----------------------------------------------------------------------------
+model Event {
+  id             String   @id @default(cuid())
+  title          String
+  description    String
+  venue          String
+  startsAt       DateTime
+  totalSeats     Int
+  seatsAvailable Int      // decremented atomically on hold, restored on release
+  priceCents     Int
+  organizerId    String
+  createdAt      DateTime @default(now())
+
+  holds    Hold[]
+  bookings Booking[]
+
+  @@index([startsAt])
+}
+
+// ----------------------------------------------------------------------------
+// Hold — a temporary reservation of N seats while "payment" is simulated.
+// `expiresAt` + a background job (NOT setTimeout) is what reclaims seats
+// from abandoned holds. Status transitions you'll need to handle:
+//   PENDING -> CONFIRMED   (payment succeeded before expiry)
+//   PENDING -> EXPIRED     (background job caught it after expiresAt)
+//   PENDING -> CANCELLED   (user backed out, or payment failed)
+//
+// Why a separate model instead of just a status field on Booking? Because
+// a Hold that never gets paid should NOT become a permanent booking record —
+// keeping them separate makes the "did this ever become real" question
+// unambiguous, and makes it obvious in the schema that Hold is the
+// temporary/unsafe state and Booking is the durable/confirmed one.
+// ----------------------------------------------------------------------------
+model Hold {
+  id        String     @id @default(cuid())
+  eventId   String
+  userId    String
+  quantity  Int
+  status    HoldStatus @default(PENDING)
+  expiresAt DateTime
+  createdAt DateTime   @default(now())
+
+  event   Event    @relation(fields: [eventId], references: [id])
+  user    User     @relation(fields: [userId], references: [id])
+  booking Booking?
+
+  @@index([status, expiresAt]) // your expiry job will query on exactly this
+}
+
+enum HoldStatus {
+  PENDING
+  CONFIRMED
+  EXPIRED
+  CANCELLED
+}
+
+// ----------------------------------------------------------------------------
+// Booking — the durable, confirmed record. One-to-one with the Hold that
+// produced it. `holdId` is unique — think about why that uniqueness
+// constraint matters for the idempotency problem specifically.
+// ----------------------------------------------------------------------------
+model Booking {
+  id        String   @id @default(cuid())
+  holdId    String   @unique
+  eventId   String
+  userId    String
+  quantity  Int
+  createdAt DateTime @default(now())
+
+  hold  Hold  @relation(fields: [holdId], references: [id])
+  event Event @relation(fields: [eventId], references: [id])
+  user  User  @relation(fields: [userId], references: [id])
+}
+
+// ----------------------------------------------------------------------------
+// WebhookEvent — this table IS your idempotency mechanism for incoming
+// payment webhooks. The unique constraint on `providerEventId` is what lets
+// you answer "have I already processed this exact event?" atomically,
+// instead of a read-then-write check that races under concurrent duplicate
+// deliveries. Think about *when* in your handler you insert this row.
+// ----------------------------------------------------------------------------
+model WebhookEvent {
+  id               String   @id @default(cuid())
+  providerEventId  String   @unique
+  type             String
+  payload          Json
+  processedAt      DateTime @default(now())
+}
+
+// ----------------------------------------------------------------------------
+// Notification — deliberately just a durable record. How it gets pushed to
+// a connected client in real time (WebSocket/SSE) is your job to wire up;
+// this table is what makes notifications survive even if the user isn't
+// connected at the moment they're created (they can fetch missed ones).
+// ----------------------------------------------------------------------------
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  type      String   // e.g. "HOLD_EXPIRING", "BOOKING_CONFIRMED", "EVENT_SOLD_OUT"
+  message   String
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, read])
+}
