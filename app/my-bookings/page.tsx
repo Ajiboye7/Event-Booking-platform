@@ -17,7 +17,7 @@ export default async function MyBookingsPage() {
 
       {loadError && (
         <p className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-          Couldn't load bookings — backend isn't wired up yet.
+          Couldn't load bookings — backend isn't wired up yet. Incorporate the backend and see the data here
         </p>
       )}
 
