@@ -47,7 +47,7 @@ export default function BookingWidget({
     setFlow({ step: "paying", holdId: flow.holdId });
     await payHold(flow.holdId);
     // TODO: real confirmation should come from the real-time channel once
-    // the webhook has actually processed — this is a placeholder.
+    // the webhook has actually processed, this is a placeholder.
     setFlow({ step: "confirmed" });
   }
 
