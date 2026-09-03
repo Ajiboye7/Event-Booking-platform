@@ -28,7 +28,7 @@ model User {
   email     String   @unique
   name      String?
   createdAt DateTime @default(now())
-
+  
   holds        Hold[]
   bookings     Booking[]
   notifications Notification[]
