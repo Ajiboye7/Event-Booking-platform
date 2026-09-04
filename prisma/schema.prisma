@@ -28,9 +28,9 @@ model User {
   email     String   @unique
   name      String?
   createdAt DateTime @default(now())
-  
-  holds        Hold[]
-  bookings     Booking[]
+
+  holds         Hold[]
+  bookings      Booking[]
   notifications Notification[]
 }
 
@@ -51,7 +51,7 @@ model Event {
   venue          String
   startsAt       DateTime
   totalSeats     Int
-  seatsAvailable Int      // decremented atomically on hold, restored on release
+  seatsAvailable Int
   priceCents     Int
   organizerId    String
   createdAt      DateTime @default(now())
@@ -59,7 +59,7 @@ model Event {
   holds    Hold[]
   bookings Booking[]
 
-  @@index([startsAt])
+  @@index([startsAt, id])
 }
 
 // ----------------------------------------------------------------------------
@@ -89,7 +89,9 @@ model Hold {
   user    User     @relation(fields: [userId], references: [id])
   booking Booking?
 
-  @@index([status, expiresAt]) // your expiry job will query on exactly this
+  @@index([status, expiresAt])
+  @@index([userId])
+  @@index([eventId])
 }
 
 enum HoldStatus {
@@ -115,6 +117,9 @@ model Booking {
   hold  Hold  @relation(fields: [holdId], references: [id])
   event Event @relation(fields: [eventId], references: [id])
   user  User  @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([eventId])
 }
 
 // ----------------------------------------------------------------------------
@@ -125,11 +130,11 @@ model Booking {
 // deliveries. Think about *when* in your handler you insert this row.
 // ----------------------------------------------------------------------------
 model WebhookEvent {
-  id               String   @id @default(cuid())
-  providerEventId  String   @unique
-  type             String
-  payload          Json
-  processedAt      DateTime @default(now())
+  id              String   @id @default(cuid())
+  providerEventId String   @unique
+  type            String
+  payload         Json
+  processedAt     DateTime @default(now())
 }
 
 // ----------------------------------------------------------------------------
@@ -141,7 +146,7 @@ model WebhookEvent {
 model Notification {
   id        String   @id @default(cuid())
   userId    String
-  type      String   // e.g. "HOLD_EXPIRING", "BOOKING_CONFIRMED", "EVENT_SOLD_OUT"
+  type      String // e.g. "HOLD_EXPIRING", "BOOKING_CONFIRMED", "EVENT_SOLD_OUT"
   message   String
   read      Boolean  @default(false)
   createdAt DateTime @default(now())
@@ -150,4 +155,3 @@ model Notification {
 
   @@index([userId, read])
 }
-
